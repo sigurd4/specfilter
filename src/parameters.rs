@@ -11,8 +11,8 @@ use crate::filter_type::FilterType;
 use crate::filter_kind::FilterKind;
 
 const MIN_FREQ: f32 = 1.0;
-const MAX_FREQ: f32 = 22000.0;
-const MIN_TRANSITION_BAND: f32 = 0.1;
+const MAX_FREQ: f32 = 30000.0;
+const MIN_TRANSITION_BAND: f32 = 0.01;
 const MIN_RIPPLE: f32 = 1.0;
 const MAX_RIPPLE: f32 = 100.0;
 const BW_EPS: f32 = 0.01;
@@ -52,7 +52,8 @@ pub struct SpecfilterParameters
     pub stopband_attenuation: AtomicFloat,
     pub frequencies: [AtomicFloat; 2],
     pub bandwidths: [AtomicFloat; 2],
-    pub mix: AtomicFloat
+    pub mix: AtomicFloat,
+    pub rate: AtomicFloat
 }
 
 impl From<&SpecfilterParameters> for SpecfilterParamData
@@ -103,14 +104,16 @@ impl SpecfilterParamData
 
 impl SpecfilterParamData
 {
-    pub fn frequency_data(&self) -> ([f32; 4], bool, bool, bool)
+    pub fn frequency_data(&self, rate: f32) -> ([f32; 4], bool, bool, bool)
     {
         let mut freq = self.frequencies;
         let mut bw = self.bandwidths;
 
+        let max_freq = MAX_FREQ.min(rate/2.0);
+
         let stop = freq[0] >= freq[1];
         let mut nolb = freq[0].min(freq[1]) <= MIN_FREQ + EPSILON;
-        let mut noub = freq[0].max(freq[1]) >= MAX_FREQ - EPSILON;
+        let mut noub = freq[0].max(freq[1]) >= max_freq - EPSILON;
 
         if stop
         {
@@ -136,10 +139,10 @@ impl SpecfilterParamData
                         [(freq[0].log2()*(1.0 - bw[0]) + MIN_FREQ.log2()*bw[0]).exp2(), freq[0], (freq[1].log2()*(1.0 - bw[1]) + freq[0].log2()*bw[1]).exp2(), freq[1]]
                     },
                     (false, true) => {
-                        [freq[0], (freq[0].log2()*(1.0 - bw[0]) + freq[1].log2()*bw[0]).exp2(), freq[1], (freq[1].log2()*(1.0 - bw[1]) + MAX_FREQ.log2()*bw[1]).exp2()]
+                        [freq[0], (freq[0].log2()*(1.0 - bw[0]) + freq[1].log2()*bw[0]).exp2(), freq[1], (freq[1].log2()*(1.0 - bw[1]) + max_freq.log2()*bw[1]).exp2()]
                     }
                     (true, true) => {
-                        [(freq[0].log2()*(1.0 - bw[0]) + MIN_FREQ.log2()*bw[0]).exp2(), freq[0], freq[1], (freq[1].log2()*(1.0 - bw[1]) + MAX_FREQ.log2()*bw[1]).exp2()]
+                        [(freq[0].log2()*(1.0 - bw[0]) + MIN_FREQ.log2()*bw[0]).exp2(), freq[0], freq[1], (freq[1].log2()*(1.0 - bw[1]) + max_freq.log2()*bw[1]).exp2()]
                     }
                 },
                 (true, false) => match bws.1
@@ -148,19 +151,19 @@ impl SpecfilterParamData
                         [MIN_FREQ, MIN_FREQ, (freq[1].log2()*(1.0 - bw[1]) + MIN_FREQ.log2()*bw[1]).exp2(), freq[1]]
                     },
                     true => {
-                        [MIN_FREQ, MIN_FREQ, freq[1], (freq[1].log2()*(1.0 - bw[1]) + MAX_FREQ.log2()*bw[1]).exp2()]
+                        [MIN_FREQ, MIN_FREQ, freq[1], (freq[1].log2()*(1.0 - bw[1]) + max_freq.log2()*bw[1]).exp2()]
                     }
                 },
                 (false, true) => match bws.0
                 {
                     false => {
-                        [freq[0], (freq[0].log2()*(1.0 - bw[0]) + MAX_FREQ.log2()*bw[0]).exp2(), MAX_FREQ, MAX_FREQ]
+                        [freq[0], (freq[0].log2()*(1.0 - bw[0]) + max_freq.log2()*bw[0]).exp2(), max_freq, max_freq]
                     },
                     true => {
-                        [(freq[0].log2()*(1.0 - bw[0]) + MIN_FREQ.log2()*bw[0]).exp2(), freq[0], MAX_FREQ, MAX_FREQ]
+                        [(freq[0].log2()*(1.0 - bw[0]) + max_freq.log2()*bw[0]).exp2(), freq[0], max_freq, max_freq]
                     }
                 },
-                (true, true) => [MIN_FREQ, MIN_FREQ, MAX_FREQ, MAX_FREQ]
+                (true, true) => [MIN_FREQ, MIN_FREQ, max_freq, max_freq]
             };
             let mut changed = false;
             if !nolb && !(freq[1]/freq[0] > 1.0 + BW_EPS)
@@ -182,11 +185,11 @@ impl SpecfilterParamData
         (freq, stop, nolb, noub)
     }
 
-    pub fn frequencies<T>(&self) -> Result<Result<([T; 2], [T; 2]), ([T; 1], [T; 1])>, bool>
+    pub fn frequencies<T>(&self, rate: f32) -> Result<Result<([T; 2], [T; 2]), ([T; 1], [T; 1])>, bool>
     where
         T: Float
     {
-        let (freq, stop, nolb, noub) = self.frequency_data();
+        let (freq, stop, nolb, noub) = self.frequency_data(rate);
 
         if nolb && noub
         {
@@ -224,9 +227,9 @@ impl SpecfilterParamData
             }))
     }
 
-    pub fn filter_type(&self) -> FilterType
+    pub fn filter_type(&self, rate: f32) -> FilterType
     {
-        let (_, stop, nolb, noub) = self.frequency_data();
+        let (_, stop, nolb, noub) = self.frequency_data(rate);
 
         if nolb && noub
         {
@@ -276,13 +279,17 @@ impl Default for SpecfilterParameters
 {
     fn default() -> Self
     {
+        let rate = 44100.0;
+        let max_freq = MAX_FREQ.min(rate/2.0);
+
         Self {
             filter_kind: AtomicU8::new(FilterKind::Butterworth as u8),
             passband_ripple: AtomicFloat::new(3.0),
             stopband_attenuation: AtomicFloat::new(40.0),
-            frequencies: [0.3, 0.7].map(|w| AtomicFloat::new((w*(MAX_FREQ.log2() - MIN_FREQ.log2()) + MIN_FREQ.log2()).exp2())),
+            frequencies: [0.3, 0.7].map(|w| AtomicFloat::new((w*(max_freq.log2() - MIN_FREQ.log2()) + MIN_FREQ.log2()).exp2())),
             bandwidths: [0.5, 0.5].map(|w| AtomicFloat::new(w)),
-            mix: AtomicFloat::new(1.0)
+            mix: AtomicFloat::new(1.0),
+            rate: AtomicFloat::new(rate)
         }
     }
 }
@@ -314,7 +321,7 @@ impl SpecfilterParameters
     pub fn frequency_data(&self) -> ([f32; 4], bool, bool, bool)
     {
         SpecfilterParamData::from(self)
-            .frequency_data()
+            .frequency_data(self.rate.get())
     }
 
     pub fn bandwidths(&self) -> [f32; 2]
@@ -334,7 +341,7 @@ impl SpecfilterParameters
     pub fn filter_type(&self) -> FilterType
     {
         SpecfilterParamData::from(self)
-            .filter_type()
+            .filter_type(self.rate.get())
     }
 }
 
@@ -394,11 +401,17 @@ impl PluginParameters for SpecfilterParameters
             SpecfilterParam::PassbandRipple => (self.passband_ripple.get() - MIN_RIPPLE)/(MAX_RIPPLE - MIN_RIPPLE),
             SpecfilterParam::StopbandAttenuation => (self.stopband_attenuation.get() - MIN_RIPPLE)/(MAX_RIPPLE - MIN_RIPPLE),
             SpecfilterParam::Mix => self.mix.get(),
-            SpecfilterParam::Frequency1 => (self.frequencies[0].get().log2() - MIN_FREQ.log2())/(MAX_FREQ.log2() - MIN_FREQ.log2()),
-            SpecfilterParam::Frequency2 => (self.frequencies[1].get().log2() - MIN_FREQ.log2())/(MAX_FREQ.log2() - MIN_FREQ.log2()),
+            SpecfilterParam::Frequency1 => {
+                let max_freq = MAX_FREQ.min(self.rate.get()/2.0);
+                (self.frequencies[0].get().log2() - MIN_FREQ.log2())/(max_freq.log2() - MIN_FREQ.log2())
+            },
+            SpecfilterParam::Frequency2 => {
+                let max_freq = MAX_FREQ.min(self.rate.get()/2.0);
+                (self.frequencies[1].get().log2() - MIN_FREQ.log2())/(max_freq.log2() - MIN_FREQ.log2())
+            },
             SpecfilterParam::Bandwidth1 => (self.bandwidths[0].get() + 1.0)*0.5,
             SpecfilterParam::Bandwidth2 => (self.bandwidths[1].get() + 1.0)*0.5,
-        }
+        }.min(1.0).max(0.0)
     }
     
     fn set_parameter(&self, index: i32, value: f32)
@@ -410,10 +423,12 @@ impl PluginParameters for SpecfilterParameters
             SpecfilterParam::StopbandAttenuation => self.stopband_attenuation.set(value*(MAX_RIPPLE - MIN_RIPPLE) + MIN_RIPPLE),
             SpecfilterParam::Mix => self.mix.set(value),
             SpecfilterParam::Frequency1 => {
-                self.frequencies[0].set((value*1.000001*(MAX_FREQ.log2() - MIN_FREQ.log2()) + MIN_FREQ.log2()).exp2().min(MAX_FREQ).max(MIN_FREQ))
+                let max_freq = MAX_FREQ.min(self.rate.get()/2.0);
+                self.frequencies[0].set((value*1.000001*(max_freq.log2() - MIN_FREQ.log2()) + MIN_FREQ.log2()).exp2().min(max_freq).max(MIN_FREQ))
             },
             SpecfilterParam::Frequency2 => {
-                self.frequencies[1].set((value*1.000001*(MAX_FREQ.log2() - MIN_FREQ.log2()) + MIN_FREQ.log2()).exp2().min(MAX_FREQ).max(MIN_FREQ))
+                let max_freq = MAX_FREQ.min(self.rate.get()/2.0);
+                self.frequencies[1].set((value*1.000001*(max_freq.log2() - MIN_FREQ.log2()) + MIN_FREQ.log2()).exp2().min(max_freq).max(MIN_FREQ))
             },
             SpecfilterParam::Bandwidth1 => self.bandwidths[0].set(value*2.0 - 1.0),
             SpecfilterParam::Bandwidth2 => self.bandwidths[1].set(value*2.0 - 1.0),

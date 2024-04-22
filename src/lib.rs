@@ -62,6 +62,8 @@ impl SpecfilterPlugin
 {
     fn generate_filter(&mut self, buf_len: usize) -> Result<(), Box<dyn std::error::Error>>
     {
+        self.param.rate.set(self.rate as f32);
+
         let param_next: SpecfilterParamData = (&*self.param).into();
         if let Some(param_prev) = &mut self.param_prev
         {
@@ -85,7 +87,7 @@ impl SpecfilterPlugin
         let param_data = self.param_prev.as_ref()
             .unwrap();
 
-        let mut freq = param_data.frequencies();
+        let mut freq = param_data.frequencies(self.rate as f32);
         let rp = param_data.passband_ripple as f64;
         let rs = param_data.stopband_attenuation as f64;
 
@@ -263,7 +265,7 @@ impl SpecfilterPlugin
                         .map(|a| a*a)
                         .sum::<f64>()
                 ).product::<f64>()).sqrt();
-        let filter_type = param_data.filter_type();
+        let filter_type = param_data.filter_type(self.rate as f32);
         if gain.is_finite() && filter.filtord() == self.filter.filtord() && filter_type != FilterType::NoPass && !(filter_type == FilterType::BandPass && self.filter_type == FilterType::BandStop)
         {
             for w in self.rtf.iter_mut()
