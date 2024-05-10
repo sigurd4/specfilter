@@ -16,7 +16,13 @@ use filter_type::FilterType;
 use num_traits::float::TotalOrder;
 use num_traits::{Float, FloatErrorKind, ParseFloatError, Zero};
 use parameters::{SpecfilterParam, SpecfilterParamData};
-use signal_processing::{Butter, Cheby1, Cheby2, Ellip, FiltOrd, FilterGenError, FilterGenPlane, FilterMut, IsStable, Plane, Rtf, Sos, Stabilize, Tf, ToSos, Zpk};
+use signal_processing::analysis::FiltOrd;
+use signal_processing::gen::filter::{Butter, Cheby1, Cheby2, Ellip, FilterGenError, FilterGenPlane, IirDesign};
+use signal_processing::operations::filtering::FilterMut;
+use signal_processing::systems::{Rtf, Sos, Tf, Zpk};
+use signal_processing::transforms::filter::Stabilize;
+use signal_processing::transforms::system::ToSos;
+use signal_processing::Plane;
 use tube_stage::TubeStage;
 use vst::{prelude::*, plugin_main};
 
@@ -30,14 +36,14 @@ pub mod filter_kind;
 pub mod tube_stage;
 
 const CHANGE: f32 = 2000.0;
+const MAX_ORDER: usize = 64;
 
 struct SpecfilterPlugin
 {
     pub param: Arc<SpecfilterParameters>,
     param_prev: Option<SpecfilterParamData>,
     filter_type: FilterType,
-    filter: Sos<f64, [f64; 3], [f64; 3], Vec<Tf<f64, [f64; 3], [f64; 3]>>>,
-    rtf: [Vec<f64>; CHANNEL_COUNT],
+    filter: [Rtf<f64, Sos<f64, [f64; 3], [f64; 3], Vec<Tf<f64, [f64; 3], [f64; 3]>>>>; CHANNEL_COUNT],
     tubes: [TubeStage; CHANNEL_COUNT],
     rate: f64,
     host: HostCallback
@@ -50,7 +56,7 @@ fn test()
 {
     let mut plugin = SpecfilterPlugin::new(HostCallback::default());
 
-    plugin.param.frequencies[0].set(20.0);
+    plugin.param.frequencies[0].set(1.18);
     plugin.param.frequencies[1].set(4242.703);
 
     plugin.generate_filter(usize::MAX).unwrap();
@@ -73,12 +79,12 @@ impl SpecfilterPlugin
             }
             if param_prev.filter_kind != param_next.filter_kind
             {
-                for rtf in self.rtf.iter_mut()
+                for rtf in self.filter.iter_mut()
                 {
-                    rtf.clear()
+                    rtf.w.clear()
                 }
             }
-            param_prev.change(param_next, 1.0 - (-CHANGE*buf_len as f32/(self.filter.filtord() + 1) as f32/self.rate as f32).exp());
+            param_prev.change(param_next, 1.0 - (-CHANGE*buf_len as f32/(self.filter[0].sys.filtord() + 1) as f32/self.rate as f32).exp());
         }
         else
         {
@@ -105,24 +111,26 @@ impl SpecfilterPlugin
                     match freq
                     {
                         Ok((fp, fs)) => {
-                            let (n, wp, ws, t) = signal_processing::buttord(
+                            let (n, wp, ws, t) = signal_processing::gen::filter::buttord(
                                 fp,
                                 fs,
                                 rp,
                                 rs,
                                 FilterGenPlane::Z { sampling_frequency: Some(self.rate) }
                             )?;
+                            let n = n.min(MAX_ORDER);
                             let w = wp.comap(ws, |wp, ws| (wp + ws)*0.5);
                             Zpk::butter(n, w, t, FilterGenPlane::Z { sampling_frequency: None })
                         },
                         Err((fp, fs)) => {
-                            let (n, wp, ws, t) = signal_processing::buttord(
+                            let (n, wp, ws, t) = signal_processing::gen::filter::buttord(
                                 fp,
                                 fs,
                                 rp,
                                 rs,
                                 FilterGenPlane::Z { sampling_frequency: Some(self.rate) }
                             )?;
+                            let n = n.min(MAX_ORDER);
                             let w = wp.comap(ws, |wp, ws| (wp + ws)*0.5);
                             Zpk::butter(n, w, t, FilterGenPlane::Z { sampling_frequency: None })
                         }
@@ -132,24 +140,26 @@ impl SpecfilterPlugin
                     match freq
                     {
                         Ok((fp, fs)) => {
-                            let (n, wp, ws, rp, t) = signal_processing::cheb1ord(
+                            let (n, wp, ws, rp, t) = signal_processing::gen::filter::cheb1ord(
                                 fp,
                                 fs,
                                 rp,
                                 rs,
                                 FilterGenPlane::Z { sampling_frequency: Some(self.rate) }
                             )?;
+                            let n = n.min(MAX_ORDER);
                             let w = wp.comap(ws, |wp, ws| (wp + ws)*0.5);
                             Zpk::cheby1(n, rp, w, t, FilterGenPlane::Z { sampling_frequency: None })
                         },
                         Err((fp, fs)) => {
-                            let (n, wp, ws, rp, t) = signal_processing::cheb1ord(
+                            let (n, wp, ws, rp, t) = signal_processing::gen::filter::cheb1ord(
                                 fp,
                                 fs,
                                 rp,
                                 rs,
                                 FilterGenPlane::Z { sampling_frequency: Some(self.rate) }
                             )?;
+                            let n = n.min(MAX_ORDER);
                             let w = wp.comap(ws, |wp, ws| (wp + ws)*0.5);
                             Zpk::cheby1(n, rp, w, t, FilterGenPlane::Z { sampling_frequency: None })
                         }
@@ -159,24 +169,26 @@ impl SpecfilterPlugin
                     match freq
                     {
                         Ok((fp, fs)) => {
-                            let (n, wp, ws, rs, t) = signal_processing::cheb2ord(
+                            let (n, wp, ws, rs, t) = signal_processing::gen::filter::cheb2ord(
                                 fp,
                                 fs,
                                 rp,
                                 rs,
                                 FilterGenPlane::Z { sampling_frequency: Some(self.rate) }
                             )?;
+                            let n = n.min(MAX_ORDER);
                             let w = wp.comap(ws, |wp, ws| (wp + ws)*0.5);
                             Zpk::cheby2(n, rs, w, t, FilterGenPlane::Z { sampling_frequency: None })
                         },
                         Err((fp, fs)) => {
-                            let (n, wp, ws, rs, t) = signal_processing::cheb2ord(
+                            let (n, wp, ws, rs, t) = signal_processing::gen::filter::cheb2ord(
                                 fp,
                                 fs,
                                 rp,
                                 rs,
                                 FilterGenPlane::Z { sampling_frequency: Some(self.rate) }
                             )?;
+                            let n = n.min(MAX_ORDER);
                             let w = wp.comap(ws, |wp, ws| (wp + ws)*0.5);
                             Zpk::cheby2(n, rs, w, t, FilterGenPlane::Z { sampling_frequency: None })
                         }
@@ -186,24 +198,26 @@ impl SpecfilterPlugin
                     match freq
                     {
                         Ok((fp, fs)) => {
-                            let (n, wp, ws, rp, rs, t) = signal_processing::ellipord(
+                            let (n, wp, ws, rp, rs, t) = signal_processing::gen::filter::ellipord(
                                 fp,
                                 fs,
                                 rp,
                                 rs,
                                 FilterGenPlane::Z { sampling_frequency: Some(self.rate) }
                             )?;
+                            let n = n.min(MAX_ORDER);
                             let w = wp.comap(ws, |wp, ws| (wp + ws)*0.5);
                             Zpk::ellip(n, rp, rs, w, t, FilterGenPlane::Z { sampling_frequency: None })
                         },
                         Err((fp, fs)) => {
-                            let (n, wp, ws, rp, rs, t) = signal_processing::ellipord(
+                            let (n, wp, ws, rp, rs, t) = signal_processing::gen::filter::ellipord(
                                 fp,
                                 fs,
                                 rp,
                                 rs,
                                 FilterGenPlane::Z { sampling_frequency: Some(self.rate) }
                             )?;
+                            let n = n.min(MAX_ORDER);
                             let w = wp.comap(ws, |wp, ws| (wp + ws)*0.5);
                             Zpk::ellip(n, rp, rs, w, t, FilterGenPlane::Z { sampling_frequency: None })
                         }
@@ -253,7 +267,7 @@ impl SpecfilterPlugin
                         .map(|a| a*a)
                         .sum::<f64>()
                 ).product::<f64>()
-            /self.filter.sos.iter()
+            /self.filter[0].sys.sos.iter()
                 .map(|sos| sos.b.trim_zeros_front()
                         .iter()
                         .copied()
@@ -266,11 +280,11 @@ impl SpecfilterPlugin
                         .sum::<f64>()
                 ).product::<f64>()).sqrt();
         let filter_type = param_data.filter_type(self.rate as f32);
-        if gain.is_finite() && filter.filtord() == self.filter.filtord() && filter_type != FilterType::NoPass && !(filter_type == FilterType::BandPass && self.filter_type == FilterType::BandStop)
+        if gain.is_finite() && filter.filtord() == self.filter[0].sys.filtord() && filter_type != FilterType::NoPass && !(filter_type == FilterType::BandPass && self.filter_type == FilterType::BandStop)
         {
-            for w in self.rtf.iter_mut()
+            for rtf in self.filter.iter_mut()
             {
-                for w in w.iter_mut()
+                for w in rtf.w.iter_mut()
                 {
                     *w *= gain
                 }
@@ -278,13 +292,17 @@ impl SpecfilterPlugin
         }
         else
         {
-            for w in self.rtf.iter_mut()
+            for rtf in self.filter.iter_mut()
             {
-                w.clear()
+                rtf.w.clear()
             }
         }
 
-        self.filter = filter;
+        for rtf in self.filter[1..].iter_mut()
+        {
+            rtf.sys = filter.clone()
+        }
+        self.filter[0].sys = filter;
         self.filter_type = filter_type;
 
         Ok(())
@@ -324,25 +342,23 @@ impl SpecfilterPlugin
         
         let mix = self.param.mix.get() as f64;
 
-        for (((input_channel, output_channel), w), tube) in buffer.zip()
-            .zip(self.rtf.iter_mut())
+        for (((input_channel, output_channel), filter), tube) in buffer.zip()
+            .zip(self.filter.iter_mut())
             .zip(self.tubes.iter_mut())
         {
-            let mut rtf = Rtf::new(&self.filter, ());
-            core::mem::swap(w, &mut rtf.w);
-
             let x: Vec<_> = input_channel.into_iter()
                 .map(|&x| x.to_f64().unwrap())
                 .collect();
 
-            let mut z = rtf.filter_mut(x.as_slice());
+            let mut z = filter.filter_mut(x.as_slice());
             
             if z.iter()
                 .any(|&z| z.is_nan())
             {
-                rtf.w = vec![];
+                filter.w.clear();
                 z.fill(0.0);
-                /*if let Some(prev_data) = prev_data
+                
+                if let Some(prev_data) = prev_data
                 {
                     self.param.reset_to(prev_data);
                     if let Some(dispatcher) = self.host.raw_callback()
@@ -356,7 +372,7 @@ impl SpecfilterPlugin
                             dispatcher(self.host.raw_effect(), 0, param_id as i32, 0, std::ptr::null_mut(), self.param.get_parameter(param_id as i32));
                         }
                     }
-                }*/
+                }
                 self.param_prev = None;
             }
 
@@ -364,11 +380,15 @@ impl SpecfilterPlugin
                 .zip(z)
                 .zip(x)
             {
-                let z = tube.next(self.rate, z);
+                let mut z = tube.next(self.rate, z);
+                if z.is_nan()
+                {
+                    z = 0.0;
+                    tube.reset();
+                }
+                let z = z.max(-10.0).min(10.0);
                 *y = T::from(z*mix + x*(1.0 - mix)).unwrap();
             }
-            
-            core::mem::swap(w, &mut rtf.w);
         }
     }
 }
@@ -383,8 +403,7 @@ impl Plugin for SpecfilterPlugin
             param: Arc::new(SpecfilterParameters::default()),
             param_prev: None,
             filter_type: FilterType::AllPass,
-            filter: Sos::one(),
-            rtf: core::array::from_fn(|_| vec![]),
+            filter: core::array::from_fn(|_| Rtf::new(Sos::one(), ())),
             tubes: core::array::from_fn(|_| TubeStage::new()),
             rate: 44100.0,
             host

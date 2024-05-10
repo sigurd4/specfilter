@@ -15,7 +15,7 @@ const MAX_FREQ: f32 = 30000.0;
 const MIN_TRANSITION_BAND: f32 = 0.01;
 const MIN_RIPPLE: f32 = 1.0;
 const MAX_RIPPLE: f32 = 100.0;
-const BW_EPS: f32 = 0.01;
+const BW_EPS: f32 = 0.00001;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SpecfilterParam

@@ -4,7 +4,7 @@ use real_time_fir_iir_filters::{iir::first::FirstOrderFilter, Filter};
 
 const G_CLIP: f64 = 0.04;
 const P_HARD_CLIP: f64 = 0.2;
-const P_HARD_CLIP_FINAL: f64 = 1.0;
+const P_HARD_CLIP_FINAL: f64 = 0.8;
 const FILTER_TUBE_CASCADE: usize = 9;
 const FILTER_TUBE_FREQUENCIES: [f64; FILTER_TUBE_CASCADE] = [
     22.0,
@@ -46,8 +46,8 @@ impl TubeStage
 
     pub fn next(&mut self, rate: f64, mut x: f64) -> f64
     {
-        x = Self::soft_clip(x, -20.0, 14.0);
-        //x = Self::soft_clip(x, -200.0, 140.0)*P_HARD_CLIP_FINAL + (1.0 - P_HARD_CLIP_FINAL)*x;
+        x = Self::soft_clip(x, -200.0, 140.0);
+        x = Self::soft_clip(x, -20.0, 14.0)*P_HARD_CLIP_FINAL + (1.0 - P_HARD_CLIP_FINAL)*x;
 
         for (k, filter_tube) in self.filter_tube.iter_mut()
             .enumerate()
@@ -69,5 +69,13 @@ impl TubeStage
         x = x/G_CLIP;
 
         x
+    }
+
+    pub fn reset(&mut self)
+    {
+        for filter in self.filter_tube.iter_mut()
+        {
+            filter.reset();
+        }
     }
 }
